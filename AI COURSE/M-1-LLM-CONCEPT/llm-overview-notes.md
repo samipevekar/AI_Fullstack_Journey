@@ -20,6 +20,13 @@ My learning notes on Large Language Models (LLMs), covering how they work, how t
 12. [How an LLM Generates Text](#12-how-an-llm-generates-text)
 13. [LLM Training Process](#13-llm-training-process)
 14. [Important Differences](#14-important-differences)
+15. [Context Window](#15-context-windows)
+16. [Maximum Output Tokens](#16-maximum-output-tokens)
+17. [Temperature](#17-temperature)
+18. [Top-K Sampling](#18-Top-K-sampling)
+19. [Top-P Sampling (Nucleus Sampling)](#19-Top-P-samplings)
+20. [Difference Between Temperature, Top-K, and Top-P](#20-Temperature)
+21. [Hallucination in LLMs](#21-hallucination-in-LLMs)
 
 ---
 
@@ -988,7 +995,257 @@ Examples include:
           |                 |
           v                 v
      Save Weights       Generated Text
+     
 ```
+
+
+## 15. Context Window
+
+The **context window** is the maximum number of tokens an LLM can consider at one time while processing a conversation.
+
+- It includes the input prompt, conversation history, system instructions, and generated responses.
+- The context window is measured in tokens, not words.
+- When the context window becomes full, the model may no longer have access to older conversation details.
+- Depending on the implementation, older messages may be removed, summarized, or the request may be rejected.
+- A larger context window allows the model to process more information at once, but does not automatically make it more intelligent.
+
+**Example:**
+
+If a model has a context window of 128,000 tokens, it can process up to that token capacity across its available context and generation.
+
+## 16. Maximum Output Tokens
+
+**Maximum output tokens** define the maximum number of tokens an LLM is allowed to generate in a single response.
+
+- It is a generation limit, not the same as the context window.
+- If the model reaches this limit, its response may stop even if the answer is incomplete.
+- The limit can be configured through an API parameter such as `max_tokens` or `max_output_tokens`, depending on the provider.
+- A model can have a large context window but a smaller maximum output token limit.
+
+**Example:**
+
+If `max_output_tokens = 500`, the model can generate at most 500 output tokens for that response.
+
+## 17. Temperature
+
+**Temperature** controls the randomness of token selection during text generation.
+
+It is applied to the logits before the softmax function calculates probabilities.
+
+Formula:
+
+\[
+P(i) = \frac{e^{z_i/T}}{\sum_j e^{z_j/T}}
+\]
+
+Where:
+- `z` = logits produced by the model.
+- `T` = temperature.
+- `P(i)` = probability of selecting a particular token.
+
+### How temperature affects generation
+
+- **Temperature = 1:** Uses the original probability distribution.
+- **Temperature < 1:** Makes the distribution sharper, increasing the preference for high-probability tokens.
+- **Temperature > 1:** Makes the distribution flatter, giving lower-probability tokens a better chance of being selected.
+- **Temperature close to 0:** Makes generation more deterministic, usually favoring the highest-probability token.
+
+### How do we actually use temperature?
+
+Temperature is generally configured during inference (when we generate responses), not during model training.
+
+For example, when using an LLM API:
+
+```javascript
+const response = await openai.chat.completions.create({
+  model: "your-model",
+  messages: [
+    { role: "user", content: "Write a story about a robot." }
+  ],
+  temperature: 0.7
+});
+```
+
+- `0.2`: More predictable and consistent responses.
+- `0.7`: A balance between predictability and variety.
+- `1.2`: More varied and creative responses.
+
+**Important:** Temperature does not change the model's learned parameters or knowledge. It only changes the probability distribution used during generation.
+
+## 18. Top-K Sampling
+
+**Top-K sampling** restricts token selection to the K tokens with the highest probabilities.
+
+Instead of sampling from the entire vocabulary, the model:
+
+1. Calculates probabilities for all vocabulary tokens.
+2. Selects the K tokens with the highest probabilities.
+3. Removes all other tokens from consideration.
+4. Renormalizes the remaining probabilities.
+5. Randomly selects a token from the remaining candidates.
+
+**Example:**
+
+Suppose the model produces these probabilities:
+
+| Token | Probability |
+|---|---:|
+| Milk | 40% |
+| Water | 25% |
+| Juice | 15% |
+| Coffee | 10% |
+| Tea | 6% |
+| Soda | 4% |
+
+If `K = 3`, only Milk, Water, and Juice remain.
+
+Their probabilities are renormalized:
+
+| Token | New Probability |
+|---|---:|
+| Milk | 50% |
+| Water | 31.25% |
+| Juice | 18.75% |
+
+The model then samples from these three candidates.
+
+## 19. Top-P Sampling (Nucleus Sampling)
+
+**Top-P sampling** selects the smallest group of tokens whose cumulative probability reaches or exceeds a specified threshold P.
+
+Unlike Top-K, the number of candidate tokens is not fixed.
+
+The process:
+
+1. Sort tokens by probability, from highest to lowest.
+2. Add their probabilities until the cumulative probability reaches or exceeds P.
+3. Remove the remaining tokens.
+4. Renormalize the selected probabilities.
+5. Randomly select a token from the remaining candidates.
+
+**Example:**
+
+Using the previous probabilities:
+
+| Token | Probability | Cumulative Probability |
+|---|---:|---:|
+| Milk | 40% | 40% |
+| Water | 25% | 65% |
+| Juice | 15% | 80% |
+| Coffee | 10% | 90% |
+| Tea | 6% | 96% |
+| Soda | 4% | 100% |
+
+If `Top-P = 0.8`, the model keeps Milk, Water, and Juice because their cumulative probability reaches 80%.
+
+**Difference between Top-K and Top-P:**
+
+- Top-K keeps a fixed number of candidate tokens.
+- Top-P keeps a variable number of candidate tokens based on cumulative probability.
+
+## 20. Difference Between Temperature, Top-K, and Top-P
+
+All three are decoding controls that influence how an LLM selects its next token.
+
+| Technique | What it controls |
+|---|---|
+| Temperature | How sharp or flat the probability distribution becomes. |
+| Top-K | How many of the highest-probability tokens can be considered. |
+| Top-P | How much cumulative probability the candidate tokens must cover. |
+
+They can be used together, depending on the model and generation implementation.
+
+A simplified generation pipeline:
+
+```text
+Input Context
+     |
+     v
+Transformer Model
+     |
+     v
+Logits
+     |
+     v
+Temperature
+     |
+     v
+Softmax (Probabilities)
+     |
+     v
+Top-K / Top-P Filtering
+     |
+     v
+Renormalization
+     |
+     v
+Sampling
+     |
+     v
+Selected Token ID
+     |
+     v
+Tokenizer Decodes Token
+     |
+     v
+Generated Text
+```
+
+Note: The exact order of temperature and sampling filters can vary between implementations.
+
+## 21. Hallucination in LLMs
+
+**Hallucination** occurs when an LLM generates information that sounds convincing but is factually incorrect, fabricated, or unsupported.
+
+LLMs are trained primarily to predict the next token, not to independently verify every factual statement.
+
+### How does hallucination happen?
+
+1. **Next-token prediction:** The model predicts likely tokens rather than independently checking whether every statement is true.
+2. **Outdated knowledge:** The model may rely on information learned during training that is no longer current.
+3. **Missing information:** When necessary information is unavailable, the model may generate a plausible guess.
+4. **Poor training data:** Incorrect or low-quality training data can influence the model to produce incorrect answers.
+5. **Conflicting information:** Contradictory information in training data or the provided context can lead to incorrect responses.
+6. **Ambiguous prompts:** The model may misunderstand the user's intention and generate an irrelevant or incorrect answer.
+7. **Fabricated information:** The model may generate fake references, names, statistics, URLs, or citations.
+8. **Context loss:** When relevant older conversation details are no longer available, the model may produce an incorrect answer based on incomplete context.
+9. **High temperature:** Higher randomness can increase the chance of unusual or incorrect responses, although temperature is not the root cause of hallucination.
+
+### How can we reduce hallucinations?
+
+- Use high-quality and reliable training data.
+- Provide clear and specific prompts.
+- Use RAG (Retrieval-Augmented Generation) to provide relevant external information.
+- Use web search to access up-to-date information when needed.
+- Verify important facts using reliable sources.
+- Encourage the model to acknowledge uncertainty instead of guessing.
+
+**Important:** These techniques can reduce hallucinations, but they cannot guarantee that an LLM will always produce correct information.
+
+### What is RAG (Retrieval-Augmented Generation)?
+
+RAG is a technique that retrieves relevant information from external sources, such as documents or databases, and provides it to an LLM as additional context before generating a response.
+
+**Basic RAG workflow:**
+
+```text
+User Question
+      |
+      v
+Retrieve Relevant Information
+      |
+      v
+Provide Information to LLM
+      |
+      v
+LLM Generates Response
+      |
+      v
+Final Answer
+```
+
+RAG helps the model answer using relevant external information instead of relying only on its learned parameters. However, incorrect or incomplete retrieved information can still lead to incorrect answers.
+
 
 **My key takeaway:**
 
